@@ -1,4 +1,4 @@
-const CACHE = 'araadi-v3';
+const CACHE = 'araadi-v4';
 const FILES = ['./', './index.html', './css/style.css', './js/geo.js', './js/data.js', './js/app.js', './js/tools.js', './lib/leaflet.js', './lib/leaflet.css', './lib/pdf.min.js', './lib/pdf.worker.min.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png',
   './lib/images/marker-icon.png', './lib/images/layers.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });

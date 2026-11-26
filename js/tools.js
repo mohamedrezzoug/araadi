@@ -57,12 +57,16 @@ const FLAGS = [
 ];
 function extractAreas(t) {
   t = AR_DIG(t).replace(/,/g, '.');
-  const out = [];
+  const out = [], NA = '(?![\\u0621-\\u064A])'; // لا يتبعها حرف عربي (يتجنب "هي" مثلاً)
   let m;
   const r1 = /(\d+(?:\.\d+)?)\s*(?:م²|م2|متر(?:ا)? مربع|m2|m²)/gi; while ((m = r1.exec(t))) out.push({ v: +m[1], raw: m[0] });
-  const r2 = /(\d+(?:\.\d+)?)\s*(?:هكتار|هـ|ه)\s*(?:و\s*)?(?:(\d+(?:\.\d+)?)\s*(?:آر|ار))?\s*(?:و\s*)?(?:(\d+(?:\.\d+)?)\s*(?:سنتيار|س))?/g;
+  // هكتار + آر + سنتيار (مثال: 1 هكتار 20 آر 50 سنتيار)
+  const r2 = new RegExp('(\\d+(?:\\.\\d+)?)\\s*(?:هكتار|هـ|ه)' + NA + '\\s*(?:و\\s*)?(?:(\\d+)\\s*(?:آر|ار)' + NA + ')?\\s*(?:و\\s*)?(?:(\\d+)\\s*(?:سنتيار|س)' + NA + ')?', 'g');
   while ((m = r2.exec(t))) { const v = (+m[1]) * 10000 + (+(m[2] || 0)) * 100 + (+(m[3] || 0)); if (v) out.push({ v, raw: m[0].trim() }); }
-  const r3 = /(\d+(?:\.\d+)?)\s*آر(?!\s*و)/g; while ((m = r3.exec(t))) if (!out.some(o => o.raw.includes(m[0]))) out.push({ v: +m[1] * 100, raw: m[0] });
+  const rest = t.replace(r2, ' ');
+  // آر + سنتيار (مثال: 6 آر 59 — الرقم الذي يلي «آر» مباشرة يعتبر سنتيار)
+  const r3 = new RegExp('(\\d+(?:\\.\\d+)?)\\s*(?:آر|ار)' + NA + '\\s*(?:و\\s*)?(\\d{1,2})?(?!\\d)', 'g');
+  while ((m = r3.exec(rest))) out.push({ v: +m[1] * 100 + (+(m[2] || 0)), raw: m[0].trim() });
   return out;
 }
 T.ai = () => `<div class="card"><h3>🤖 ARAADI AI — تحليل الوثائق</h3>
