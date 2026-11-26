@@ -52,3 +52,8 @@ button{font:inherit;cursor:pointer}
 .leaflet-container{font-family:inherit}
 @media(min-width:900px){.page:not(#page-map){max-width:820px;margin:auto}}
 @media print{.top,.bottom,.searchbar{display:none}}
+
+#layerbar{position:absolute;z-index:500;top:62px;inset-inline:10px;display:flex;gap:6px}
+#layerbar button{flex:1;border:0;border-radius:10px;padding:7px 4px;background:#fffe;box-shadow:0 1px 6px #0003;font-size:13px;color:var(--ink)}
+#layerbar button.on{background:var(--g);color:#fff}
+.measure-hud{top:104px!important}
