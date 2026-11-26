@@ -41,8 +41,11 @@ T.measure = () => `<div class="card"><h3>قياس الأراضي والإحدا�
 <p class="muted">حدد حدود الأرض على الخريطة، أو الصق الإحداثيات (نقطة في كل سطر). النتائج تقريبية وليست بديلاً عن عمل مهندس طبوغرافي.</p>
 <label>نظام الإحداثيات<select id="mCrs">${Object.entries(CRS_NAMES).map(([k, v]) => `<option value="${k}" ${k === DB.get('crs', 'nord') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
 <div class="btnrow"><button class="primary" onclick="startMeasure()">🗺️ القياس على الخريطة</button></div>
+<label>📊 استيراد ملف Excel / CSV (.xlsx .xls .csv)<input id="mXls" type="file" accept=".xlsx,.xls,.csv,.txt" onchange="importXls(this.files[0])"></label>
+<label class="check" style="border:0;padding:0"><input type="checkbox" id="mSwap"><span style="font-size:13px;color:var(--mut)">الترتيب في الملف Y ثم X (أو lng ثم lat)</span></label>
+<div id="mXlsInfo" class="muted"></div>
 <label>أو الصق الإحداثيات (X Y أو lat,lng) — العلامة العشرية نقطة<textarea id="mCoords" rows="5" dir="ltr" placeholder="483581.08 466281.05&#10;483640.20 466300.10&#10;483620.00 466250.30"></textarea></label>
-<div class="btnrow"><button class="ghost" onclick="calcCoords()">احسب</button><button class="ghost" onclick="showOnMap()">اعرض على الخريطة</button><button class="ghost" onclick="copyPts()">📋 نسخ</button></div>
+<div class="btnrow"><button class="ghost" onclick="calcCoords()">احسب</button><button class="ghost" onclick="showOnMap()">اعرض على الخريطة</button><button class="ghost" onclick="copyPts()">📋 نسخ</button><button class="ghost" onclick="exportXls()">⬇️ تصدير Excel</button></div>
 <div id="mOut" class="res"></div></div>`;
 T.measureInit = () => { $('#mCrs').onchange = () => { DB.set('crs', $('#mCrs').value); updateMeasure(); }; updateMeasure(); };
 function ptRows(crs) {
@@ -53,6 +56,53 @@ function copyPts() {
   if (!rows.length) return toast('لا نقاط');
   const txt = rows.map(r => r.join('\t')).join('\n');
   (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('تم النسخ'), () => { $('#mCoords').value = txt; toast('انسخ النص من الخانة'); });
+}
+const cellNum = v => { if (typeof v === 'number') return v; if (typeof v === 'string') { const s = v.trim().replace(',', '.'); if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s); } return null; };
+async function importXls(f) {
+  if (!f) return; const info = $('#mXlsInfo');
+  try {
+    let rows, sheetName = '';
+    if (/\.(csv|txt)$/i.test(f.name)) {
+      const lines = (await f.text()).split(/\r?\n/).filter(l => l.trim());
+      const d = lines.some(l => l.includes(';')) ? ';' : lines.some(l => l.includes('\t')) ? '\t' : ',';
+      rows = lines.map(l => l.split(d)); sheetName = 'CSV';
+    } else {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }); sheetName = wb.SheetNames[0];
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: null });
+      rows = rows.map(r => r.length === 1 && typeof r[0] === 'string' && /[;\t]/.test(r[0]) ? r[0].split(/[;\t]/) : r);
+    }
+    let xi = -1, yi = -1, hdr = -1;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const r = rows[i].map(c => String(c ?? '').trim().toLowerCase());
+      const fx = r.findIndex(c => ['x', 'e', 'est', 'easting', 'lon', 'long', 'longitude', 'lng'].includes(c));
+      const fy = r.findIndex(c => ['y', 'n', 'nord', 'northing', 'lat', 'latitude'].includes(c));
+      if (fx >= 0 && fy >= 0) { xi = fx; yi = fy; hdr = i; break; }
+    }
+    const swap = $('#mSwap').checked, xy = [], gps = [];
+    for (let i = hdr + 1; i < rows.length; i++) {
+      const r = rows[i]; let a, b;
+      if (xi >= 0) { a = cellNum(r[xi]); b = cellNum(r[yi]); }
+      else { const ns = r.map(cellNum).filter(v => v !== null); const big = ns.filter(v => Math.abs(v) >= 1000); const p = big.length >= 2 ? big.slice(0, 2) : ns.slice(-2); a = p[0]; b = p[1]; }
+      if (a == null || b == null) continue;
+      if (swap && xi < 0) [a, b] = [b, a];
+      if (Math.abs(a) >= 1000 && Math.abs(b) >= 1000) xy.push([a, b]);
+      else if (Math.abs(a) <= 100 && Math.abs(b) <= 100) gps.push(a >= -18 && a <= 0 && b >= 20 && b <= 37 ? [b, a] : [a, b]);
+    }
+    const sel = $('#mCrs');
+    if (xy.length >= gps.length && xy.length) { if (sel.value === 'gps') sel.value = 'nord'; $('#mCoords').value = xy.map(p => p[0] + ' ' + p[1]).join('\n'); }
+    else if (gps.length) { sel.value = 'gps'; $('#mCoords').value = gps.map(p => p[0] + ',' + p[1]).join('\n'); }
+    else { info.textContent = '⚠️ لم أجد إحداثيات رقمية في أول ورقة. تأكد من وجود عمودين (X وY أو lat وlng).'; return; }
+    info.textContent = `📊 ${f.name} — ${xy.length + gps.length} نقطة (${sheetName})`;
+    calcCoords();
+  } catch (e) { info.textContent = '❌ تعذرت قراءة الملف.'; }
+}
+function exportXls() {
+  if (measurePts.length < 1) return toast('لا نقاط للتصدير');
+  const crs = ($('#mCrs').value === 'sud') ? 'sud' : 'nord';
+  const rows = [['Point', 'X (' + crs + ')', 'Y (' + crs + ')', 'Lat', 'Lng']].concat(measurePts.map((p, i) => { const q = toXY(p, crs); return ['P' + (i + 1), +q[0].toFixed(2), +q[1].toFixed(2), +p[0].toFixed(6), +p[1].toFixed(6)]; }));
+  if (measurePts.length > 2) rows.push([], ['Area m2', +polyAreaXY(measurePts.map(q => toXY(q, crs))).toFixed(1)], ['Perimeter m', +perimeter(measurePts).toFixed(1)]);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'ARAADI');
+  XLSX.writeFile(wb, 'araadi-coordonnees.xlsx');
 }
 function calcCoords() {
   const crs = $('#mCrs').value; DB.set('crs', crs);
