@@ -67,15 +67,36 @@ function extractAreas(t) {
 }
 T.ai = () => `<div class="card"><h3>🤖 ARAADI AI — تحليل الوثائق</h3>
 <p class="muted">الصق نص الوثيقة (رسم عقاري، شهادة ملكية، مذكرة معلومات التعمير…). التحليل يتم داخل هاتفك. قراءة الصور (OCR) غير مفعلة في هذه النسخة.</p>
+<label>📄 استيراد ملف PDF أو نص (.pdf / .txt)<input id="aiFile" type="file" accept=".pdf,.txt,application/pdf,text/plain" onchange="importDoc(this.files[0])"></label>
+<div id="aiFileInfo" class="muted"></div>
 <label>نص الوثيقة<textarea id="aiText" rows="8" placeholder="الصق النص هنا…"></textarea></label>
 <label>مساحة مرجعية أخرى (م²) — اختياري، للمقارنة<input id="aiRef" type="number"></label>
 <div class="btnrow"><button class="primary" onclick="runAI()">حلل</button><button class="ghost" onclick="window.print()">🖨️ طباعة / PDF</button></div>
 <div id="aiOut"></div></div>`;
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = './lib/pdf.worker.min.js';
+async function importDoc(f) {
+  if (!f) return; const info = $('#aiFileInfo'); info.textContent = '⏳ جاري قراءة الملف…';
+  try {
+    let text = '';
+    if (/\.txt$/i.test(f.name)) text = await f.text();
+    else {
+      const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+      const n = Math.min(pdf.numPages, 60);
+      for (let i = 1; i <= n; i++) {
+        const c = await (await pdf.getPage(i)).getTextContent();
+        text += c.items.map(x => x.str).join(' ') + '\n';
+      }
+      info.textContent = `📄 ${f.name} — ${n} صفحة`;
+    }
+    if (text.trim().length < 20) { info.innerHTML = '⚠️ الملف لا يحتوي على نص قابل للقراءة (غالباً صورة ممسوحة ضوئياً). OCR غير متوفر في هذه النسخة؛ الصق النص يدوياً.'; return; }
+    $('#aiText').value = text; info.textContent += ' — تم الاستيراد. راجع النص ثم اضغط «حلل».'; runAI();
+  } catch (e) { info.textContent = '❌ تعذرت قراءة الملف (ربما محمي بكلمة سر أو تالف).'; }
+}
 function runAI() {
   const txt = $('#aiText').value; if (txt.trim().length < 10) return toast('الصق نصاً أطول');
   const areas = extractAreas(txt), ref = +$('#aiRef').value;
   const norm = AR_DIG(txt);
-  const titres = [...new Set((norm.match(/(?:رسم عقاري|الرسم العقاري|R\.?F\.?|titre foncier)[^\d]{0,15}(\d+\s*\/\s*\w+|\d+)/gi) || []))];
+  const titres = [...new Set((norm.match(/(?:رسم عقاري|الرسم العقاري|\bR\.?F\b|titre foncier)[^\d]{0,15}(\d+\s*\/\s*\w+|\d+)/gi) || []))];
   const flags = FLAGS.filter(f => txt.includes(f[0]));
   let html = '<div class="res">';
   html += `<b>المساحات المستخرجة:</b> ${areas.length ? areas.map(a => `${fmt(a.v)} م² <small class="muted">(${esc(a.raw)})</small>`).join(' · ') : 'لم تُعثر على مساحة'}<br>`;

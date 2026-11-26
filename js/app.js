@@ -18,10 +18,17 @@ $$('.bottom button').forEach(b => b.onclick = () => go(b.dataset.p));
 const map = L.map('map', { zoomControl: false }).setView([34.55, -5.9], 8);
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
 const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
-const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
-osm.addTo(map);
-let isSat = false;
-$('#btnLayer').onclick = () => { isSat ? (map.removeLayer(sat), osm.addTo(map)) : (map.removeLayer(osm), sat.addTo(map)); isSat = !isSat; };
+const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri World Imagery' });
+const lbl = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+const MODES = [['🗺️ خريطة عادية', [osm]], ['🛰️ قمر صناعي', [esri]], ['🛰️ قمر صناعي + أسماء', [esri, lbl]]];
+let mode = DB.get('mapmode', 0), active = [];
+function setMode(i) {
+  active.forEach(l => map.removeLayer(l)); mode = i % MODES.length;
+  active = MODES[mode][1]; active.forEach(l => l.addTo(map)); DB.set('mapmode', mode);
+  $('#btnLayer').textContent = mode ? '🗺️' : '🛰️';
+}
+setMode(mode);
+$('#btnLayer').onclick = () => { setMode(mode + 1); toast(MODES[mode][0]); };
 $('#btnLocate').onclick = () => {
   if (!navigator.geolocation) return toast('الموقع غير متاح');
   navigator.geolocation.getCurrentPosition(p => { map.setView([p.coords.latitude, p.coords.longitude], 15); L.circleMarker([p.coords.latitude, p.coords.longitude], { radius: 8, color: '#1a73e8' }).addTo(map); }, () => toast('تعذر تحديد موقعك'));
