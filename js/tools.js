@@ -10,7 +10,15 @@ function updateMeasure() {
   const a = polyArea(measurePts), p = perimeter(measurePts, measurePts.length > 2);
   hud.innerHTML = `📐 النقاط: ${measurePts.length} · المحيط: <b>${fmt(p)} م</b> · المساحة: <b>${fmtArea(a)}</b>
   <div class="btnrow"><button class="ghost" onclick="undoPt()">↩︎ تراجع</button><button class="ghost" onclick="clearMeasure()">🗑️ مسح</button><button class="primary" onclick="stopMeasure()">تم</button></div>`;
-  const out = $('#mOut'); if (out) out.innerHTML = measurePts.length ? `المساحة: <b>${fmtArea(a)}</b><br>المحيط: <b>${fmt(p)} م</b><br>عدد النقاط: ${measurePts.length}` : '';
+  const out = $('#mOut');
+  if (out) {
+    const crs = ($('#mCrs') || {}).value || 'nord';
+    const head = crs === 'gps' ? ['النقطة', 'Lat', 'Lng'] : ['النقطة', 'X (م)', 'Y (م)'];
+    let ar = a;
+    if (measurePts.length > 2 && crs !== 'gps') ar = polyAreaXY(measurePts.map(q => toXY(q, crs)));
+    out.innerHTML = measurePts.length ? `المساحة: <b>${fmtArea(ar)}</b><br>المحيط: <b>${fmt(p)} م</b><br>عدد النقاط: ${measurePts.length}
+    <div style="overflow:auto"><table class="kv" dir="ltr" style="text-align:right"><tr>${head.map(x => `<td><b>${x}</b></td>`).join('')}</tr>${ptRows(crs).map(r => `<tr>${r.map(x => `<td>${x}</td>`).join('')}</tr>`).join('')}</table></div>` : '';
+  }
 }
 map.on('click', e => { if (!measuring) return; measurePts.push([e.latlng.lat, e.latlng.lng]); updateMeasure(); });
 function startMeasure() { measuring = true; go('map'); hud.classList.add('on'); updateMeasure(); toast('اضغط على الخريطة لتحديد زوايا الأرض'); }
@@ -29,16 +37,27 @@ function selectTool(t) {
 $$('#toolTabs button').forEach(b => b.onclick = () => selectTool(b.dataset.t));
 
 // 📐 قياس
-T.measure = () => `<div class="card"><h3>قياس الأراضي</h3>
-<p class="muted">حدد حدود الأرض على الخريطة أو الصق الإحداثيات (lat,lng في كل سطر). النتائج تقريبية وليست بديلاً عن عمل مهندس طبوغرافي.</p>
+T.measure = () => `<div class="card"><h3>قياس الأراضي والإحداثيات</h3>
+<p class="muted">حدد حدود الأرض على الخريطة، أو الصق الإحداثيات (نقطة في كل سطر). النتائج تقريبية وليست بديلاً عن عمل مهندس طبوغرافي.</p>
+<label>نظام الإحداثيات<select id="mCrs">${Object.entries(CRS_NAMES).map(([k, v]) => `<option value="${k}" ${k === DB.get('crs', 'nord') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
 <div class="btnrow"><button class="primary" onclick="startMeasure()">🗺️ القياس على الخريطة</button></div>
-<label>أو الصق إحداثيات GPS<textarea id="mCoords" rows="5" dir="ltr" placeholder="34.7967,-5.5778&#10;34.7971,-5.5770&#10;34.7963,-5.5768"></textarea></label>
-<div class="btnrow"><button class="ghost" onclick="calcCoords()">احسب</button><button class="ghost" onclick="showOnMap()">اعرض على الخريطة</button></div>
+<label>أو الصق الإحداثيات (X Y أو lat,lng) — العلامة العشرية نقطة<textarea id="mCoords" rows="5" dir="ltr" placeholder="483581.08 466281.05&#10;483640.20 466300.10&#10;483620.00 466250.30"></textarea></label>
+<div class="btnrow"><button class="ghost" onclick="calcCoords()">احسب</button><button class="ghost" onclick="showOnMap()">اعرض على الخريطة</button><button class="ghost" onclick="copyPts()">📋 نسخ</button></div>
 <div id="mOut" class="res"></div></div>`;
-T.measureInit = () => updateMeasure();
+T.measureInit = () => { $('#mCrs').onchange = () => { DB.set('crs', $('#mCrs').value); updateMeasure(); }; updateMeasure(); };
+function ptRows(crs) {
+  return measurePts.map((p, i) => crs === 'gps' ? [`P${i + 1}`, p[0].toFixed(6), p[1].toFixed(6)] : (xy => [`P${i + 1}`, xy[0].toFixed(2), xy[1].toFixed(2)])(toXY(p, crs)));
+}
+function copyPts() {
+  const crs = $('#mCrs').value, rows = ptRows(crs);
+  if (!rows.length) return toast('لا نقاط');
+  const txt = rows.map(r => r.join('\t')).join('\n');
+  (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('تم النسخ'), () => { $('#mCoords').value = txt; toast('انسخ النص من الخانة'); });
+}
 function calcCoords() {
-  const pts = parseCoords($('#mCoords').value);
-  if (pts.length < 3) return toast('3 نقاط صحيحة على الأقل (داخل المغرب)');
+  const crs = $('#mCrs').value; DB.set('crs', crs);
+  const pts = parsePoints($('#mCoords').value, crs);
+  if (pts.length < 3) return toast('3 نقاط صحيحة على الأقل (داخل المغرب، وتأكد من النظام المختار)');
   measurePts = pts; updateMeasure();
 }
 function showOnMap() {

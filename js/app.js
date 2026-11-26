@@ -80,6 +80,7 @@ function openSheet(id) {
    <tr><td>التحفيظ</td><td>${esc(p.titled || 'غير متحقق')}</td></tr>
    <tr><td>الثمن</td><td>${p.price ? fmt(p.price) + ' د.م' + ' (≈ ' + fmt(p.price / polyArea(p.coords)) + ' د.م/م²)' : 'غير محدد'}</td></tr>
    <tr><td>GPS</td><td dir="ltr">${centroid(p.coords).map(x => x.toFixed(5)).join(', ')}</td></tr>
+   <tr><td>X, Y (Lambert Nord)</td><td dir="ltr">${toXY(centroid(p.coords), 'nord').map(x => x.toFixed(2)).join(' , ')}</td></tr>
   </table>
   <div class="btnrow">
    <button class="primary" onclick="toggleFav('${p.id}')">${isFav ? '★ في المفضلة' : '☆ حفظ'}</button>
@@ -115,8 +116,8 @@ function renderList() {
 $('#sellForm').addEventListener('submit', e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
-  const pts = parseCoords(f.coords);
-  if (pts.length < 3) return toast('أدخل 3 نقاط إحداثيات على الأقل (lat,lng)');
+  const pts = parsePoints(f.coords, f.crs);
+  if (pts.length < 3) return toast('أدخل 3 نقاط صحيحة على الأقل وتأكد من نظام الإحداثيات');
   const ads = DB.get('ads', []);
   const id = 'USR-' + String(Date.now()).slice(-6);
   ads.push({ id, title: f.title, province: f.province, commune: f.commune, type: f.type, titled: f.titled, ownership: 'تصريح البائع — غير موثق', price: +f.price || null, contact: f.contact, coords: pts, area: Math.round(polyArea(pts)), status: 'pending', demo: false });
@@ -125,7 +126,7 @@ $('#sellForm').addEventListener('submit', e => {
 });
 $('#useMeasure').onclick = () => {
   if (!measurePts.length || measurePts.length < 3) return toast('حدد 3 نقاط على الأقل بأداة القياس');
-  $('#sellForm [name=coords]').value = measurePts.map(p => p[0].toFixed(6) + ',' + p[1].toFixed(6)).join('\n');
+  const c = $('#sCrs').value; $('#sellForm [name=coords]').value = measurePts.map(p => c === 'gps' ? p[0].toFixed(6) + ',' + p[1].toFixed(6) : toXY(p, c).map(v => v.toFixed(2)).join(' ')).join('\n');
 };
 function renderMyAds() {
   const ads = DB.get('ads', []);
