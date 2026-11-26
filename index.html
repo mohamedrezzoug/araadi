@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f5c4d">
+<title>ARAADI – عقارك بذكاء</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./lib/leaflet.css">
+<link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>ARAADI</b><small>SMART REAL ESTATE</small></div>
+  <div class="top-actions">
+    <button id="btnLocate" title="موقعي">📍</button>
+    <button id="btnLayer" title="نوع الخريطة">🛰️</button>
+  </div>
+</header>
+
+<main>
+  <!-- الخريطة -->
+  <section id="page-map" class="page active">
+    <div class="searchbar"><input id="q" type="search" placeholder="ابحث عن أرض أو عقار (وزان، القنيطرة…)"></div>
+    <div id="map"></div>
+    <div id="sheet" class="sheet hidden"></div>
+    <div class="map-note">⚠️ المعطيات المعروضة تجريبية وغير رسمية — لا تعتبر إثباتاً للملكية أو لصلاحية البناء.</div>
+  </section>
+
+  <!-- المواطن: بحث -->
+  <section id="page-search" class="page">
+    <h2>🔎 فضاء المواطن</h2>
+    <div class="filters">
+      <select id="fProv"><option value="">كل الأقاليم</option></select>
+      <select id="fType"><option value="">كل الأنواع</option><option>سكنية</option><option>فلاحية</option><option>تجارية</option><option>صناعية</option></select>
+      <input id="fMax" type="number" placeholder="أقصى ثمن (د.م)">
+    </div>
+    <div id="list"></div>
+  </section>
+
+  <!-- البائع -->
+  <section id="page-sell" class="page">
+    <h2>🏷️ فضاء البائع</h2>
+    <div class="card">
+      <h3>نشر قطعة أرضية</h3>
+      <p class="muted">حدد حدود الأرض على الخريطة (أداة القياس) أو أدخل الإحداثيات، ثم أكمل المعلومات.</p>
+      <form id="sellForm">
+        <label>العنوان<input name="title" required placeholder="مثال: أرض قرب الطريق الوطنية"></label>
+        <div class="row2">
+          <label>الإقليم<input name="province" required placeholder="وزان"></label>
+          <label>الجماعة<input name="commune" placeholder="مزفرون"></label>
+        </div>
+        <div class="row2">
+          <label>طبيعة الأرض<select name="type"><option>سكنية</option><option>فلاحية</option><option>تجارية</option><option>صناعية</option></select></label>
+          <label>الثمن (د.م)<input name="price" type="number" min="0"></label>
+        </div>
+        <div class="row2">
+          <label>التحفيظ<select name="titled"><option value="غير متحقق">غير متحقق</option><option value="محفظة">محفظة (رسم عقاري)</option><option value="غير محفظة">غير محفظة</option></select></label>
+          <label>الهاتف<input name="contact" type="tel" placeholder="06…"></label>
+        </div>
+        <label>الحدود (lat,lng لكل نقطة في سطر — 3 نقاط على الأقل)
+          <textarea name="coords" rows="4" placeholder="34.7967,-5.5778&#10;34.7971,-5.5770&#10;34.7963,-5.5768"></textarea></label>
+        <div class="btnrow">
+          <button type="button" id="useMeasure" class="ghost">استعمال حدود أداة القياس</button>
+          <button class="primary">نشر الإعلان</button>
+        </div>
+      </form>
+    </div>
+    <h3>إعلاناتي</h3>
+    <div id="myAds"></div>
+  </section>
+
+  <!-- المشتري -->
+  <section id="page-buy" class="page">
+    <h2>🛒 فضاء المشتري</h2>
+    <h3>المفضلة والمقارنة</h3>
+    <div id="favs"></div>
+    <div id="compare"></div>
+  </section>
+
+  <!-- المهني -->
+  <section id="page-pro" class="page">
+    <h2>🧰 فضاء المهنيين والأدوات</h2>
+    <div class="tabs" id="toolTabs">
+      <button data-t="measure" class="on">📐 قياس</button>
+      <button data-t="ai">🤖 ARAADI AI</button>
+      <button data-t="build">🏗️ صلاحية البناء</button>
+      <button data-t="price">💰 الثمن</button>
+      <button data-t="safe">✅ شراء آمن</button>
+      <button data-t="slope">⛰️ الانحدار</button>
+      <button data-t="admin">🛡️ الإدارة</button>
+    </div>
+    <div id="tool"></div>
+  </section>
+</main>
+
+<nav class="bottom">
+  <button data-p="map" class="on"><span>🗺️</span>الخريطة</button>
+  <button data-p="search"><span>🔎</span>المواطن</button>
+  <button data-p="sell"><span>🏷️</span>البائع</button>
+  <button data-p="buy"><span>🛒</span>المشتري</button>
+  <button data-p="pro"><span>🧰</span>المهني</button>
+</nav>
+<div id="toast"></div>
+
+<script src="./lib/leaflet.js"></script>
+<script src="./js/geo.js"></script>
+<script src="./js/data.js"></script>
+<script src="./js/app.js"></script>
+<script src="./js/tools.js"></script>
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body>
+</html>
