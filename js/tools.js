@@ -129,6 +129,7 @@ function parseDXF(text) {
     if (c === 0) { if (v === 'ENDSEC') break; cur = { type: v, p: [] }; ents.push(cur); }
     else if (cur) cur.p.push([c, v]);
   }
+  window.dxfStats = {}; ents.forEach(e => dxfStats[e.type] = (dxfStats[e.type] || 0) + 1);
   const out = []; const F = (e, code) => { const x = e.p.find(q => q[0] === code); return x ? x[1] : null; };
   const num = v => parseFloat(v), layerOf = e => F(e, 8) || '0';
   for (let k = 0; k < ents.length; k++) {
@@ -158,7 +159,7 @@ T.cad = () => `<div class="card"><h3>📁 استيراد رسم CAD (DXF)</h3>
 <div id="cSearchRes"></div><div id="cOut"></div>
 <div class="btnrow"><button class="ghost" onclick="clearCad()">🗑️ إزالة الرسم من الخريطة</button></div></div>`;
 T.cadInit = () => { if (cadPolys.length) renderCadOut(); };
-let cadPolys = [], cadTexts = [], cadHi = L.layerGroup().addTo(map), cadLys = [];
+let cadCrs = 'nord', cadPolys = [], cadTexts = [], cadHi = L.layerGroup().addTo(map), cadLys = [];
 const normTxt = s => AR_DIG(String(s)).toLowerCase();
 function pip(x, y, poly) { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
 async function importCad(f) {
@@ -170,7 +171,7 @@ async function importCad(f) {
     if (txt.slice(0, 20).includes('AutoCAD Binary DXF')) { info.textContent = '⚠️ DXF ثنائي (Binary). احفظه DXF نصي (ASCII).'; return; }
     const feats = parseDXF(txt).slice(0, 40000);
     if (!feats.length) { info.textContent = '⚠️ لم أجد كيانات مدعومة (خطوط، مضلعات، نقاط، نصوص). قد يكون الرسم داخل Blocks.'; return; }
-    const crs = $('#cCrs').value; DB.set('crs', crs);
+    const crs = $('#cCrs').value; DB.set('crs', crs); cadCrs = crs;
     const first = fromXY(feats[0].pts[0][0], feats[0].pts[0][1], crs);
     if (!(first[0] >= 20 && first[0] <= 37 && first[1] >= -18 && first[1] <= 0)) { info.textContent = '⚠️ الإحداثيات تقع خارج المغرب بهذا النظام. جرّب Nord/Sud الآخر، أو أن الرسم بإحداثيات محلية.'; return; }
     cadGroup.clearLayers(); cadHi.clearLayers(); cadLayers = {}; cadPolys = []; cadTexts = [];
@@ -181,14 +182,13 @@ async function importCad(f) {
     feats.forEach(ft => {
       const ll = ft.pts.map(p => fromXY(p[0], p[1], crs)), L0 = cadLayers[ft.ly]; L0.n++; all.push(...ll);
       if (ft.t === 'pl') {
-        const n = ft.pts.length, closed = (ft.closed || (n > 3 && Math.hypot(ft.pts[0][0] - ft.pts[n - 1][0], ft.pts[0][1] - ft.pts[n - 1][1]) < 0.05)) && n > 2;
+        const n = ft.pts.length, closed = (ft.closed || (n > 3 && Math.hypot(ft.pts[0][0] - ft.pts[n - 1][0], ft.pts[0][1] - ft.pts[n - 1][1]) < 0.5)) && n > 2;
         if (closed) {
-          const xy = ft.pts.slice(0, Math.hypot(ft.pts[0][0] - ft.pts[n - 1][0], ft.pts[0][1] - ft.pts[n - 1][1]) < 0.05 ? n - 1 : n);
+          const xy = ft.pts.slice(0, Math.hypot(ft.pts[0][0] - ft.pts[n - 1][0], ft.pts[0][1] - ft.pts[n - 1][1]) < 0.5 ? n - 1 : n);
           const xs = xy.map(p => p[0]), ys = xy.map(p => p[1]);
           const o = { ly: ft.ly, xy, ll: xy.map(p => fromXY(p[0], p[1], crs)), area: polyAreaXY(xy), bb: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], texts: [] };
           o.per = xy.reduce((s, p, i) => s + Math.hypot(p[0] - xy[(i + 1) % xy.length][0], p[1] - xy[(i + 1) % xy.length][1]), 0);
           o.lyr = L.polygon(o.ll, { color: L0.color, weight: 1.5, fillOpacity: .08 }).addTo(L0.g);
-          o.lyr.on('click', () => { if (!measuring) openCadSheet(o); });
           cadPolys.push(o);
         } else L.polyline(ll, { color: L0.color, weight: 1.5 }).addTo(L0.g);
       } else if (ft.t === 'pt') L.circleMarker(ll[0], { radius: 3, color: L0.color }).addTo(L0.g);
@@ -201,7 +201,8 @@ async function importCad(f) {
     // ربط كل نص بأصغر مضلع يحتويه
     const bySmall = [...cadPolys].reverse();
     cadTexts.forEach(tx => { for (const p of bySmall) { const [x0, y0, x1, y1] = p.bb; if (tx.xy[0] < x0 || tx.xy[0] > x1 || tx.xy[1] < y0 || tx.xy[1] > y1) continue; if (pip(tx.xy[0], tx.xy[1], p.xy)) { tx.poly = p; p.texts.push(tx.text); break; } } });
-    info.textContent = `📁 ${f.name} — ${feats.length} كيان، ${cadLys.length} طبقة، ${cadPolys.length} قطعة مغلقة، ${cadTexts.length} نص`;
+    const st = Object.entries(dxfStats).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}:${v}`).join(' ، ');
+    info.innerHTML = `📁 ${esc(f.name)} — ${feats.length} كيان، ${cadLys.length} طبقة، <b>${cadPolys.length} قطعة مغلقة</b>، ${cadTexts.length} نص<br><small dir="ltr">${esc(st)}</small>` + (cadPolys.length < 3 ? '<br>⚠️ لم أجد قطعاً مغلقة تقريباً: ربما الحدود مرسومة بخطوط LINE منفصلة أو HATCH، ولا يمكن الضغط عليها كقطع.' : '');
     renderCadOut();
     go('map'); map.fitBounds(L.latLngBounds(all), { maxZoom: 19, padding: [30, 30] }); toast('اضغط على أي قطعة لعرض معلوماتها');
   } catch (e) { info.textContent = '❌ تعذرت قراءة الملف.'; console.error(e); }
@@ -212,6 +213,12 @@ function renderCadOut() {
   ${cadPolys.length ? `<h3>أكبر القطع</h3>${cadPolys.slice(0, 20).map(p => `<div class="card item"><div><b>${fmtArea(p.area)}</b><br><small class="muted">${esc(p.texts.join(' · ') || p.ly)} · ${p.xy.length} نقطة</small></div><button class="ghost" onclick="cadFocus(${p.id})">عرض</button></div>`).join('')}` : ''}`;
   $$('#cOut input[data-ly]').forEach(i => i.onchange = () => { const l = cadLayers[i.dataset.ly]; if (l) i.checked ? cadGroup.addLayer(l.g) : cadGroup.removeLayer(l.g); });
 }
+map.on('click', e => {
+  if (measuring || !cadPolys.length) return;
+  const [x, y] = toXY([e.latlng.lat, e.latlng.lng], cadCrs); let best = null;
+  for (const p of cadPolys) { const b = p.bb; if (x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue; if (pip(x, y, p.xy) && (!best || p.area < best.area)) best = p; }
+  if (best) openCadSheet(best);
+});
 function cadSearch(q, max) {
   q = normTxt(q.trim()); if (q.length < 1 || !cadTexts.length) return [];
   const ex = cadTexts.filter(t => t.n === q), part = cadTexts.filter(t => t.n !== q && t.n.includes(q));
