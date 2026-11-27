@@ -281,34 +281,125 @@ function extractAreas(t) {
   // آر + سنتيار (مثال: 6 آر 59 — الرقم الذي يلي «آر» مباشرة يعتبر سنتيار)
   const r3 = new RegExp('(\\d+(?:\\.\\d+)?)\\s*(?:آر|ار)' + NA + '\\s*(?:و\\s*)?(\\d{1,2})?(?!\\d)', 'g');
   while ((m = r3.exec(rest))) out.push({ v: +m[1] * 100 + (+(m[2] || 0)), raw: m[0].trim() });
+  // صيغة لاتينية: 0 ha 06 a 58.66 ca  /  06 a 59 ca
+  const r4 = /(?:(\d+)\s*ha\s*)?(\d+)\s*a\s*(\d+(?:\.\d+)?)\s*ca\b/gi;
+  while ((m = r4.exec(t))) { const v = (+(m[1] || 0)) * 10000 + (+m[2]) * 100 + (+m[3]); if (v) out.push({ v, raw: m[0].trim() }); }
   return out;
 }
 T.ai = () => `<div class="card"><h3>🤖 ARAADI AI — تحليل الوثائق</h3>
-<p class="muted">الصق نص الوثيقة (رسم عقاري، شهادة ملكية، مذكرة معلومات التعمير…). التحليل يتم داخل هاتفك. قراءة الصور (OCR) غير مفعلة في هذه النسخة.</p>
-<label>📄 استيراد ملف PDF أو نص (.pdf / .txt)<input id="aiFile" type="file" accept=".pdf,.txt,application/pdf,text/plain" onchange="importDoc(this.files[0])"></label>
+<p class="muted">الصق نص الوثيقة (رسم عقاري، شهادة ملكية، حساب المساحات Calcul de contenances، مذكرة التعمير…). التحليل يتم داخل هاتفك. الوثائق الممسوحة (صور / PDF بدون نص) تُقرأ بـ OCR على جهازك دون إرسالها لأي خادم.</p>
+<label>📄 استيراد PDF أو صورة أو نص (.pdf .jpg .png .txt) — الوثائق الممسوحة تُقرأ بتقنية OCR<input id="aiFile" type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,image/*,application/pdf,text/plain" onchange="importDoc(this.files[0])"></label>
 <div id="aiFileInfo" class="muted"></div>
 <label>نص الوثيقة<textarea id="aiText" rows="8" placeholder="الصق النص هنا…"></textarea></label>
 <label>مساحة مرجعية أخرى (م²) — اختياري، للمقارنة<input id="aiRef" type="number"></label>
 <div class="btnrow"><button class="primary" onclick="runAI()">حلل</button><button class="ghost" onclick="window.print()">🖨️ طباعة / PDF</button></div>
 <div id="aiOut"></div></div>`;
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = './lib/pdf.worker.min.js';
+const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+let ocrWorker = null;
+async function getOcr(msg) {
+  if (ocrWorker) return ocrWorker;
+  if (!window.Tesseract) await loadScript('./lib/ocr/tesseract.min.js');
+  const abs = p => new URL(p, location.href).href;
+  msg('⏳ تحميل محرك OCR (أول مرة فقط)…');
+  ocrWorker = await Tesseract.createWorker('eng', 1, { workerPath: abs('./lib/ocr/worker.min.js'), corePath: abs('./lib/ocr/core'), langPath: abs('./lib/ocr/lang'), cacheMethod: 'none', logger: m => { if (m.status === 'recognizing text') msg(`🔎 OCR… ${Math.round(m.progress * 100)}%`); } });
+  return ocrWorker;
+}
+function prepCanvas(src, w, h) {
+  const k = Math.max(1, (window.OCR_MAX || 2400) / Math.max(w, h)), c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src, 0, 0, c.width, c.height);
+  const d = x.getImageData(0, 0, c.width, c.height), p = d.data; // رمادي + رفع التباين
+  for (let i = 0; i < p.length; i += 4) { let g = .299 * p[i] + .587 * p[i + 1] + .114 * p[i + 2]; g = Math.max(0, Math.min(255, (g - 110) * 1.6 + 110)); p[i] = p[i + 1] = p[i + 2] = g; }
+  x.putImageData(d, 0, 0); return c;
+}
+const NUMTOK = { test: s => { s = s.trim(); const d = (s.match(/\d/g) || []).length; return d >= 6 && d <= 9 && !/[A-Za-z:\/-]/.test(s); } };
+function parseCoordNum(s) {
+  const t = String(s).replace(/[^0-9.]/g, '');
+  if (/^\d{5,7}\.\d{1,3}$/.test(t)) return parseFloat(t);
+  const d = t.replace(/\./g, '');
+  return d.length >= 7 && d.length <= 9 ? parseFloat(d.slice(0, -2) + '.' + d.slice(-2)) : null;
+}
+async function readCrop(c, bb, w) {
+  const pad = 10, m = 24, cw = bb.x1 - bb.x0 + 2 * pad, ch = bb.y1 - bb.y0 + 2 * pad, k = Math.max(1, (window.OCR_CROP || 90) / ch);
+  const cc = document.createElement('canvas'); cc.width = Math.round((cw + 2 * m) * k); cc.height = Math.round((ch + 2 * m) * k);
+  const x = cc.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, cc.width, cc.height);
+  x.drawImage(c, bb.x0 - pad, bb.y0 - pad, cw, ch, m * k, m * k, cw * k, ch * k);
+  return parseCoordNum((await w.recognize(cc)).data.text);
+}
+// يعيد قراءة كل رقم إحداثي على حدة بنمط "أرقام فقط" لرفع الدقة
+async function refineCoords(c, data, w) {
+  const rows = [];
+  (data.lines || []).forEach(ln => {
+    const cand = (ln.words || []).filter(wd => NUMTOK.test(wd.text.trim()));
+    if (cand.length >= 2) { cand.sort((p, q) => p.bbox.x0 - q.bbox.x0); rows.push(cand.slice(0, 2)); }
+  });
+  if (rows.length < 3) return [];
+  await w.setParameters({ tessedit_char_whitelist: '0123456789.', tessedit_pageseg_mode: '7' });
+  let out = [];
+  for (const [p, q] of rows) { const X = await readCrop(c, p.bbox, w), Y = await readCrop(c, q.bbox, w); if (X != null && Y != null) out.push([X, Y]); }
+  await w.setParameters({ tessedit_char_whitelist: '', tessedit_pageseg_mode: '3' });
+  if (out.length >= 3) { // استبعاد الشواذ (نقط بعيدة جداً عن الباقي)
+    const med = a => [...a].sort((u, v) => u - v)[Math.floor(a.length / 2)], mx = med(out.map(r => r[0])), my = med(out.map(r => r[1]));
+    out = out.filter(r => Math.abs(r[0] - mx) < 3000 && Math.abs(r[1] - my) < 3000);
+  }
+  return out.length >= 3 ? out : [];
+}
+let ocrPts = null, ocrSnap = '', ocrFlag = false;
+async function ocrCanvas(c, w) { const { data } = await w.recognize(c); return { text: data.text, pts: await refineCoords(c, data, w) }; }
+async function ocrImageFile(f, msg) {
+  const bmp = await createImageBitmap(f), c = prepCanvas(bmp, bmp.width, bmp.height), w = await getOcr(msg);
+  return ocrCanvas(c, w);
+}
+async function ocrPdf(pdf, msg) {
+  const w = await getOcr(msg); let text = '', pts = [];
+  for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
+    const pg = await pdf.getPage(i), vp = pg.getViewport({ scale: 3 }), c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+    await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    const r = await ocrCanvas(prepCanvas(c, c.width, c.height), w); text += r.text + '\n'; pts = pts.concat(r.pts);
+  }
+  return { text, pts };
+}
 async function importDoc(f) {
-  if (!f) return; const info = $('#aiFileInfo'); info.textContent = '⏳ جاري قراءة الملف…';
+  if (!f) return; const info = $('#aiFileInfo'), msg = m => info.textContent = m; let ocr = false;
+  msg('⏳ جاري قراءة الملف…'); ocrPts = null;
   try {
     let text = '';
     if (/\.txt$/i.test(f.name)) text = await f.text();
+    else if (/\.(png|jpe?g|webp|bmp)$/i.test(f.name) || f.type.startsWith('image/')) { const r = await ocrImageFile(f, msg); text = r.text; ocrPts = r.pts; ocr = true; }
     else {
       const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
       const n = Math.min(pdf.numPages, 60);
-      for (let i = 1; i <= n; i++) {
-        const c = await (await pdf.getPage(i)).getTextContent();
-        text += c.items.map(x => x.str).join(' ') + '\n';
-      }
-      info.textContent = `📄 ${f.name} — ${n} صفحة`;
+      for (let i = 1; i <= n; i++) { const c = await (await pdf.getPage(i)).getTextContent(); text += c.items.map(x => x.str).join(' ') + '\n'; }
+      if (text.trim().length < 20) { const r = await ocrPdf(pdf, msg); text = r.text; ocrPts = r.pts; ocr = true; }
     }
-    if (text.trim().length < 20) { info.innerHTML = '⚠️ الملف لا يحتوي على نص قابل للقراءة (غالباً صورة ممسوحة ضوئياً). OCR غير متوفر في هذه النسخة؛ الصق النص يدوياً.'; return; }
-    $('#aiText').value = text; info.textContent += ' — تم الاستيراد. راجع النص ثم اضغط «حلل».'; runAI();
-  } catch (e) { info.textContent = '❌ تعذرت قراءة الملف (ربما محمي بكلمة سر أو تالف).'; }
+    if (text.trim().length < 10) { info.textContent = '⚠️ لم أستطع قراءة أي نص من الملف.'; return; }
+    $('#aiText').value = text; ocrSnap = text; ocrFlag = ocr;
+    info.innerHTML = `📄 ${esc(f.name)} — تم الاستيراد${ocr ? ' بتقنية <b>OCR</b> ⚠️ راجع الأرقام جيداً قبل الاعتماد (قد تحدث أخطاء في القراءة)' : ''}.`;
+    runAI();
+  } catch (e) { info.textContent = '❌ تعذرت قراءة الملف.'; console.error(e); }
+}
+function extractXY(txt) {
+  const n = AR_DIG(txt).replace(/(\d),(\d)/g, '$1.$2').replace(/(\d)\s+\.(\d)/g, '$1.$2');
+  const re = /(?<![\d.])\d{5,7}\.\d{1,3}(?!\d)/g, rows = [];
+  n.split(/\r?\n/).forEach(l => { const m = (l.match(re) || []).map(parseFloat); if (m.length >= 2) rows.push([m[0], m[1]]); });
+  if (rows.length >= 3) return rows;
+  const nums = (n.match(re) || []).map(parseFloat), pts = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+  return pts;
+}
+let docPts = [];
+let docAreasRef = [];
+function docLinesPts() { return ($('#docXY').value || '').split(/\n+/).map(l => (l.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).filter(v => v >= 1000).slice(0, 2)).filter(r => r.length === 2); }
+function docAreaUpdate() {
+  const pts = docLinesPts(), el = $('#docArea'); if (!el) return;
+  if (pts.length < 3) { el.textContent = 'أدخل 3 نقاط على الأقل (سطر لكل نقطة: X Y).'; return; }
+  const pa = polyAreaXY(pts), ok = docAreasRef.some(v => Math.abs(v - pa) / v < 0.02);
+  el.innerHTML = `${pts.length} نقطة — المساحة المحسوبة: <b>${fmt(pa)} م²</b> — ${ok ? '✅ قريبة من المساحة المذكورة في الوثيقة' : docAreasRef.length ? '⚠️ لا تطابق ' + docAreasRef.slice(0, 3).map(v => fmt(v) + ' م²').join(' / ') + ' — تحقق من الأرقام وترتيب النقاط' : 'لا مساحة مذكورة للمقارنة'}`;
+}
+function docToMap() {
+  const pts = docLinesPts(); if (pts.length < 3) return toast('3 نقاط على الأقل');
+  selectTool('measure');
+  setTimeout(() => { $('#mCrs').value = 'nord'; $('#mCoords').value = pts.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('\n'); showOnMap(); }, 60);
 }
 function runAI() {
   const txt = $('#aiText').value; if (txt.trim().length < 10) return toast('الصق نصاً أطول');
@@ -316,7 +407,19 @@ function runAI() {
   const norm = AR_DIG(txt);
   const titres = [...new Set((norm.match(/(?:رسم عقاري|الرسم العقاري|\bR\.?F\b|titre foncier)[^\d]{0,15}(\d+\s*\/\s*\w+|\d+)/gi) || []))];
   const flags = FLAGS.filter(f => txt.includes(f[0]));
-  let html = '<div class="res">';
+  docPts = (ocrPts && ocrPts.length >= 3 && txt === ocrSnap) ? ocrPts : extractXY(txt);
+  let html = '';
+  docAreasRef = areas.map(x => x.v).filter(v => v > 1);
+  const isOcr = ocrFlag && txt === ocrSnap;
+  if (docPts.length >= 3 || (isOcr && /\d{6}/.test(AR_DIG(txt)))) {
+    html += `<div class="res ${isOcr ? 'warn' : ''}">📍 إحداثيات X,Y مقترحة (<b>${docPts.length}</b> نقطة)${isOcr ? ' — <b>قراءة OCR قد تخطئ في الأرقام (مثلاً 8 ↔ 3)</b>' : ''}.
+    <br>صحّح الأرقام هنا بمقارنتها بالوثيقة الأصلية، والمساحة تُحسب مباشرة:
+    <textarea id="docXY" rows="9" dir="ltr" oninput="docAreaUpdate()" placeholder="472494.93 473187.85">${docPts.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('\n')}</textarea>
+    <div id="docArea" class="muted"></div>
+    <button class="primary" onclick="docToMap()">🗺️ عرض على الخريطة (Lambert Nord)</button></div>`;
+    setTimeout(docAreaUpdate, 0);
+  }
+  html += '<div class="res">';
   html += `<b>المساحات المستخرجة:</b> ${areas.length ? areas.map(a => `${fmt(a.v)} م² <small class="muted">(${esc(a.raw)})</small>`).join(' · ') : 'لم تُعثر على مساحة'}<br>`;
   html += `<b>مراجع الرسم العقاري:</b> ${titres.length ? titres.map(esc).join(' · ') : 'غير مذكورة'}`;
   html += '</div>';
